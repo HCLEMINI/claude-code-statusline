@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# 本地私密配置（含 webhook / token，绝不入库）
+*.local.json
+settings.local.json
+.env
+feishu_webhook.txt
+
+# 运行时缓存（statusline 产物）
+statusline_state.json
+statusline_debug.log
+quota_5h_cache.json
+kimi_balance_cache.json
+ds_balance_cache.json
+stop_input_debug.log
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,55 @@
+{
+  "_comment": "示例配置 — 把 statusLine + hooks 接入 ~/.claude/settings.json（或项目级 .claude/settings.json）。webhook 走环境变量，绝不要硬编码。",
+  "statusLine": {
+    "type": "command",
+    "command": "python \"C:/Users/YOU/.claude/statusline.py\"",
+    "refreshInterval": 5
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/YOU/.claude/hooks/feishu_notify.py\"",
+            "shell": "bash",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/YOU/.claude/hooks/feishu_notify.py\"",
+            "shell": "bash",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/YOU/.claude/hooks/done_notify.py\"",
+            "shell": "bash",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "_comment_env": "飞书 webhook 放这里（Claude Code 的 env 会注入到 hook 子进程）。path 替换成你自己的安装位置。",
+    "FEISHU_WEBHOOK_URL": "https://open.feishu.cn/open-apis/bot/v2/hook/你的webhook-id"
+  }
+}
