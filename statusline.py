@@ -410,6 +410,11 @@ elif main_cost > 0:
 elif fallback:
     line2.append('花费¥0')
 
+# 4b. Cumulative token consumption (main + agent, input + output) in millions
+total_tokens = mti + mto + ati + ato
+if total_tokens > 0:
+    line2.append(f'消耗{total_tokens / 1_000_000:.2f}M')
+
 # 5. Cumulative cache hit rate = cache_read / total_input (main + agent)
 total_ti_all = mti + ati
 if total_ti_all > 0:
