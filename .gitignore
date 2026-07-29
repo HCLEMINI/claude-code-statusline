@@ -19,3 +19,8 @@ stop_input_debug.log
 # OS
 Thumbs.db
 .DS_Store
+
+# 本地备份/压缩产物
+*.zip
+*.zip.fp
+.git.zip*
