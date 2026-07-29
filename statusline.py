@@ -231,11 +231,12 @@ def clr(s, code):
 
 
 def ctx_color(pct):
-    """Green<50% / Yellow 50-80% / Red>=80% — context fill warning gradient."""
+    """Green<50% / Yellow 50-80% / Bright-red>=80% — context fill warning.
+    Uses bright red (91) so the danger level stays visible on dark themes."""
     if pct is None:
         return '36'
     if pct >= 80:
-        return '31'  # red
+        return '91'  # bright red (visible on dark)
     if pct >= 50:
         return '33'  # yellow
     return '32'  # green
@@ -361,7 +362,7 @@ try:
     d = json.loads(fix_json(raw))
 except Exception as e:
     try:
-        with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log'), 'a', encoding='utf-8') as dbg:
+        with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log', 'a', encoding='utf-8') as dbg:
             dbg.write(f'--- {__import__("datetime").datetime.now()} ---\n')
             dbg.write(f'Error: {e}\n')
             dbg.write(f'Raw stdin: {repr(raw)}\n\n')
@@ -418,7 +419,7 @@ if ti_cur > 0 or to_cur > 0:
     token_str = f'↑{fmt_tokens(ti_cur)} ↓{fmt_tokens(to_cur)}'
     if cws > 0:
         token_str += f'/{fmt_tokens(cws)}'
-    line1.append(clr(token_str, '90'))
+    line1.append(token_str)
 
 # 4. Cumulative cost + cache stats (main + agent) via transcript parsing
 fallback = get_pricing(model) or get_pricing(model_id)
@@ -436,13 +437,13 @@ elif fallback:
 # 4b. Cumulative token consumption (main + agent, input + output) in millions
 total_tokens = mti + mto + ati + ato
 if total_tokens > 0:
-    line2.append(clr(f'消耗{total_tokens / 1_000_000:.2f}M', '34'))
+    line2.append(f'消耗{total_tokens / 1_000_000:.2f}M')
 
 # 5. Cumulative cache hit rate = cache_read / total_input (main + agent)
 total_ti_all = mti + ati
 if total_ti_all > 0:
     rate = total_cr / total_ti_all * 100
-    line2.append(clr(f'缓存命中{rate:.0f}%', '32' if rate >= 50 else '33'))
+    line2.append(f'缓存命中{rate:.0f}%')
 
 # 6. GLM 5h quota (cached; background-refreshed when stale)
 def get_5h_quota_display(model_name):
@@ -577,9 +578,8 @@ if ds_str:
 # 7. Effort level
 eff = d.get('effort', {}).get('level', '')
 if eff:
-    line1.append(clr(f'⚡{eff}', '1;33'))
+    line1.append(f'⚡{eff}')
 
 # Two-line output: line1 = live state, line2 = session totals
-SEP = clr(' | ', '90')  # dim gray separator
-out_lines = [SEP.join(p) for p in (line1, line2) if p]
+out_lines = [' | '.join(p) for p in (line1, line2) if p]
 print('\n'.join(out_lines) if out_lines else '')
