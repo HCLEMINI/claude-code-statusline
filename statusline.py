@@ -218,6 +218,29 @@ def fmt_rmb(yuan):
         return f'¥{yuan:.4f}'
 
 
+# ========== ANSI color helpers ==========
+# Set STATUSLINE_NOCOLOR=1 to disable (e.g. when piping output).
+_NO_COLOR = bool(os.environ.get('STATUSLINE_NOCOLOR'))
+
+
+def clr(s, code):
+    """Wrap s in ANSI color; code is the numeric SGR (e.g. '32', '1;36')."""
+    if _NO_COLOR:
+        return s
+    return f'\033[{code}m{s}\033[0m'
+
+
+def ctx_color(pct):
+    """Green<50% / Yellow 50-80% / Red>=80% — context fill warning gradient."""
+    if pct is None:
+        return '36'
+    if pct >= 80:
+        return '31'  # red
+    if pct >= 50:
+        return '33'  # yellow
+    return '32'  # green
+
+
 def load_state():
     try:
         with open(STATE_FILE, 'r', encoding='utf-8') as f:
@@ -354,7 +377,7 @@ line2 = []  # 会话累计: 花费 / 缓存命中
 model_id = d.get('model', {}).get('id', '')
 model = d.get('model', {}).get('display_name', '')
 if model:
-    line1.append(model)
+    line1.append(clr(model, '1;36'))
 
 # 2. Context window usage + remaining (with sticky cache to avoid streaming flicker)
 cw = d.get('context_window', {})
@@ -388,14 +411,14 @@ else:
 
 if used is not None:
     remain = state.get('last_remain')
-    line1.append(f'上下文 {used:.0f}% (剩余{remain:.0f}%)')
+    line1.append(clr(f'上下文 {used:.0f}% (剩余{remain:.0f}%)', ctx_color(used)))
 
 # 3. Current context tokens
 if ti_cur > 0 or to_cur > 0:
     token_str = f'↑{fmt_tokens(ti_cur)} ↓{fmt_tokens(to_cur)}'
     if cws > 0:
         token_str += f'/{fmt_tokens(cws)}'
-    line1.append(token_str)
+    line1.append(clr(token_str, '90'))
 
 # 4. Cumulative cost + cache stats (main + agent) via transcript parsing
 fallback = get_pricing(model) or get_pricing(model_id)
@@ -404,22 +427,22 @@ main_cost, agent_cost, mti, mto, ati, ato, total_cr = compute_session_cost(
 save_state(state)
 
 if agent_cost > 0:
-    line2.append(f'花费{fmt_rmb(main_cost + agent_cost)}(含agent{fmt_rmb(agent_cost)})')
+    line2.append(clr(f'花费{fmt_rmb(main_cost + agent_cost)}(含agent{fmt_rmb(agent_cost)})', '33'))
 elif main_cost > 0:
-    line2.append(f'花费{fmt_rmb(main_cost)}')
+    line2.append(clr(f'花费{fmt_rmb(main_cost)}', '33'))
 elif fallback:
-    line2.append('花费¥0')
+    line2.append(clr('花费¥0', '33'))
 
 # 4b. Cumulative token consumption (main + agent, input + output) in millions
 total_tokens = mti + mto + ati + ato
 if total_tokens > 0:
-    line2.append(f'消耗{total_tokens / 1_000_000:.2f}M')
+    line2.append(clr(f'消耗{total_tokens / 1_000_000:.2f}M', '34'))
 
 # 5. Cumulative cache hit rate = cache_read / total_input (main + agent)
 total_ti_all = mti + ati
 if total_ti_all > 0:
     rate = total_cr / total_ti_all * 100
-    line2.append(f'缓存命中{rate:.0f}%')
+    line2.append(clr(f'缓存命中{rate:.0f}%', '32' if rate >= 50 else '33'))
 
 # 6. GLM 5h quota (cached; background-refreshed when stale)
 def get_5h_quota_display(model_name):
@@ -469,7 +492,7 @@ def get_5h_quota_display(model_name):
 
 quota_str = get_5h_quota_display(model)
 if quota_str:
-    line2.append(quota_str)
+    line2.append(clr(quota_str, '35'))
 
 # 6b. Kimi account balance (cached; background-refreshed when stale)
 def get_kimi_balance_display(model_name):
@@ -509,7 +532,7 @@ def get_kimi_balance_display(model_name):
 
 kimi_str = get_kimi_balance_display(model)
 if kimi_str:
-    line2.append(kimi_str)
+    line2.append(clr(kimi_str, '35'))
 
 # 6c. DeepSeek account balance (cached; background-refreshed when stale)
 def get_ds_balance_display(model_name):
@@ -549,13 +572,14 @@ def get_ds_balance_display(model_name):
 
 ds_str = get_ds_balance_display(model)
 if ds_str:
-    line2.append(ds_str)
+    line2.append(clr(ds_str, '35'))
 
 # 7. Effort level
 eff = d.get('effort', {}).get('level', '')
 if eff:
-    line1.append(f'⚡{eff}')
+    line1.append(clr(f'⚡{eff}', '1;33'))
 
 # Two-line output: line1 = live state, line2 = session totals
-out_lines = [' | '.join(p) for p in (line1, line2) if p]
+SEP = clr(' | ', '90')  # dim gray separator
+out_lines = [SEP.join(p) for p in (line1, line2) if p]
 print('\n'.join(out_lines) if out_lines else '')
