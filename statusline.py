@@ -412,7 +412,7 @@ else:
 
 if used is not None:
     remain = state.get('last_remain')
-    line1.append(clr(f'上下文 {used:.0f}% (剩余{remain:.0f}%)', ctx_color(used)))
+    line1.append(f'上下文 {clr(f"{used:.0f}% (剩余{remain:.0f}%)", ctx_color(used))}')
 
 # 3. Current context tokens
 if ti_cur > 0 or to_cur > 0:
@@ -428,11 +428,11 @@ main_cost, agent_cost, mti, mto, ati, ato, total_cr = compute_session_cost(
 save_state(state)
 
 if agent_cost > 0:
-    line2.append(clr(f'花费{fmt_rmb(main_cost + agent_cost)}(含agent{fmt_rmb(agent_cost)})', '33'))
+    line2.append(f'花费{clr(f"{fmt_rmb(main_cost + agent_cost)}(含agent{fmt_rmb(agent_cost)})", "33")}')
 elif main_cost > 0:
-    line2.append(clr(f'花费{fmt_rmb(main_cost)}', '33'))
+    line2.append(f'花费{clr(fmt_rmb(main_cost), "33")}')
 elif fallback:
-    line2.append(clr('花费¥0', '33'))
+    line2.append(f'花费{clr("¥0", "33")}')
 
 # 4b. Cumulative token consumption (main + agent, input + output) in millions
 total_tokens = mti + mto + ati + ato
@@ -489,11 +489,11 @@ def get_5h_quota_display(model_name):
         delta_h = (reset_ms - now * 1000) / 3_600_000.0
         if delta_h > 0:
             suffix = f'({delta_h * 60:.0f}min)' if delta_h < 1 else f'({delta_h:.1f}h)'
-    return f'5h已用{used:.0f}%{suffix}'
+    return f'5h已用{clr(f"{used:.0f}%{suffix}", "34")}'
 
 quota_str = get_5h_quota_display(model)
 if quota_str:
-    line2.append(clr(quota_str, '35'))
+    line2.append(quota_str)
 
 # 6b. Kimi account balance (cached; background-refreshed when stale)
 def get_kimi_balance_display(model_name):
@@ -529,11 +529,11 @@ def get_kimi_balance_display(model_name):
     balance = cache.get('balance')
     if balance is None:
         return None
-    return f'余额¥{balance:.2f}'
+    return f'余额{clr(f"¥{balance:.2f}", "34")}'
 
 kimi_str = get_kimi_balance_display(model)
 if kimi_str:
-    line2.append(clr(kimi_str, '35'))
+    line2.append(kimi_str)
 
 # 6c. DeepSeek account balance (cached; background-refreshed when stale)
 def get_ds_balance_display(model_name):
@@ -569,11 +569,11 @@ def get_ds_balance_display(model_name):
     balance = cache.get('balance')
     if balance is None:
         return None
-    return f'余额¥{balance:.2f}'
+    return f'余额{clr(f"¥{balance:.2f}", "34")}'
 
 ds_str = get_ds_balance_display(model)
 if ds_str:
-    line2.append(clr(ds_str, '35'))
+    line2.append(ds_str)
 
 # 7. Effort level
 eff = d.get('effort', {}).get('level', '')
