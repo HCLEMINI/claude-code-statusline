@@ -300,7 +300,10 @@ def parse_transcript_cost(filepath, fallback_pricing, offset=0):
     ti = to = cr_total = 0
     new_offset = offset
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        # errors='replace': a corrupt byte must never abort the loop mid-file,
+        # or the partial parse + unadvanced offset would DOUBLE-COUNT those
+        # lines on the next incremental pass.
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
             if offset:
                 f.seek(offset)
             for line in f:
@@ -354,16 +357,19 @@ def parse_or_reuse(fp_path, size, cached, fallback_pricing):
     """
     if cached and cached.get('v') == 3 and cached.get('size') == size:
         return cached
-    if cached and cached.get('v') == 3 and size >= cached.get('offset', 0) \
-            and cached.get('incs', 0) < 40:
-        c, ti, to, cr, new_off = parse_transcript_cost(fp_path, fallback_pricing,
-                                                       cached['offset'])
-        return {'v': 3, 'size': size, 'offset': new_off,
-                'cost': cached['cost'] + c,
-                'ti': cached['ti'] + ti,
-                'to': cached['to'] + to,
-                'cr': cached['cr'] + cr,
-                'incs': cached['incs'] + 1}
+    try:
+        if cached and cached.get('v') == 3 and size >= cached.get('offset', 0) \
+                and cached.get('incs', 0) < 40:
+            c, ti, to, cr, new_off = parse_transcript_cost(fp_path, fallback_pricing,
+                                                           cached['offset'])
+            return {'v': 3, 'size': size, 'offset': new_off,
+                    'cost': cached.get('cost', 0) + c,
+                    'ti': cached.get('ti', 0) + ti,
+                    'to': cached.get('to', 0) + to,
+                    'cr': cached.get('cr', 0) + cr,
+                    'incs': cached.get('incs', 0) + 1}
+    except Exception:
+        pass  # corrupt/malformed cache entry → fall through to full re-parse
     c, ti, to, cr, new_off = parse_transcript_cost(fp_path, fallback_pricing, 0)
     return {'v': 3, 'size': size, 'offset': new_off,
             'cost': c, 'ti': ti, 'to': to, 'cr': cr, 'incs': 0}
@@ -423,7 +429,7 @@ if '--refresh-all-sessions' not in sys.argv:
         d = json.loads(fix_json(raw))
     except Exception as e:
         try:
-            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log'), 'a', encoding='utf-8') as dbg:
+            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log', 'a', encoding='utf-8') as dbg:
                 dbg.write(f'--- {__import__("datetime").datetime.now()} ---\n')
                 dbg.write(f'Error: {e}\n')
                 dbg.write(f'Raw stdin: {repr(raw)}\n\n')
