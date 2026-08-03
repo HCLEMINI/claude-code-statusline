@@ -253,6 +253,7 @@ _OD_CYAN = '38;2;86;182;194'       # shimmer  #56b6c2
 _OD_GREEN = '38;2;152;195;121'     # success  #98c379
 _OD_YELLOW = '38;2;229;192;123'    # warning  #e5c07b
 _OD_RED = '1;38;2;224;108;117'     # error    #e06c75 (bold so danger stays loud)
+_OD_PURPLE = '38;2;198;120;221'    # perm     #c678dd
 
 
 def clr(s, code):
@@ -534,7 +535,7 @@ if ti_cur > 0 or to_cur > 0:
     token_str = f'↑{fmt_tokens(ti_cur)} ↓{fmt_tokens(to_cur)}'
     if cws > 0:
         token_str += f'/{fmt_tokens(cws)}'
-    line1.append(token_str)
+    line1.append(clr(token_str, _OD_CYAN))
 
 # 4. Cumulative cost + cache stats (main + agent) via transcript parsing
 fallback = get_pricing(model) or get_pricing(model_id)
@@ -553,13 +554,13 @@ elif fallback:
 in_tok = mti + ati
 out_tok = mto + ato
 if in_tok + out_tok > 0:
-    line2.append(f'输入{in_tok / 1_000_000:.2f}M/输出{out_tok / 1_000_000:.2f}M')
+    line2.append(clr(f'输入{in_tok / 1_000_000:.2f}M/输出{out_tok / 1_000_000:.2f}M', _OD_CYAN))
 
 # 5. Cumulative cache hit rate = cache_read / total_input (main + agent)
 total_ti_all = mti + ati
 if total_ti_all > 0:
     rate = total_cr / total_ti_all * 100
-    line2.append(f'缓存命中{rate:.0f}%')
+    line2.append(clr(f'缓存命中{rate:.0f}%', _OD_PURPLE))
 
 # 6. GLM 5h quota (cached; background-refreshed when stale)
 def get_5h_quota_display(model_name):

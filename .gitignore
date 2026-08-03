@@ -24,3 +24,4 @@ Thumbs.db
 *.zip
 *.zip.fp
 .git.zip*
+.feishu_webhook
