@@ -511,10 +511,11 @@ elif main_cost > 0:
 elif fallback:
     line2.append(f'花费{clr("¥0", "33")}')
 
-# 4b. Cumulative token consumption (main + agent, input + output) in millions
-total_tokens = mti + mto + ati + ato
-if total_tokens > 0:
-    line2.append(f'消耗{total_tokens / 1_000_000:.2f}M')
+# 4b. Cumulative token consumption split into input / output (main + agent)
+in_tok = mti + ati
+out_tok = mto + ato
+if in_tok + out_tok > 0:
+    line2.append(f'输入{in_tok / 1_000_000:.2f}M/输出{out_tok / 1_000_000:.2f}M')
 
 # 5. Cumulative cache hit rate = cache_read / total_input (main + agent)
 total_ti_all = mti + ati
