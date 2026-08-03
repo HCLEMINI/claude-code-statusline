@@ -264,9 +264,12 @@ def parse_transcript_cost(filepath, fallback_pricing):
     Returns (cost, total_input, total_output, call_count, cache_read_total).
       - total_input = input_tokens + cache_creation + cache_read (all input)
       - cache_read_total = sum of cache_read_input_tokens (served from cache)
-    Deduplicates usage entries within the file (same call may be logged >1x).
+    Dedup is keyed by the record's `uuid` — the only reliable "same API
+    response" identifier. Token-count dedup is WRONG: distinct calls routinely
+    share identical token counts (measured: 149 merged groups, 52% cost
+    undercount). Records without a uuid are always counted.
     Looks up pricing per-entry via the message.model field, falling back to
-    the session's model pricing.
+    the session's model pricing (handles mid-session model switches).
     """
     seen = set()
     cost = 0.0
@@ -285,9 +288,13 @@ def parse_transcript_cost(filepath, fallback_pricing):
                       usage.get('cache_creation_input_tokens', 0),
                       usage.get('cache_read_input_tokens', 0),
                       usage.get('output_tokens', 0))
-                if fp in seen:
-                    continue
-                seen.add(fp)
+                # Dedup by uuid only (same response logged >1x); never by
+                # token counts, which collide across distinct calls.
+                uid = rec.get('uuid', '')
+                if uid:
+                    if uid in seen:
+                        continue
+                    seen.add(uid)
                 pricing = get_pricing(rec.get('message', {}).get('model', '')) or fallback_pricing
                 if not pricing:
                     continue
@@ -332,15 +339,16 @@ def compute_session_cost(transcript_path, session_id, fallback_pricing, state):
             except Exception:
                 continue
             cached = file_cache.get(fp_path)
-            # Re-parse if size changed OR cache entry lacks the 'cr' field (old format)
-            if cached and cached.get('size') == size and 'cr' in cached:
+            # Re-parse if size changed OR cache format is stale (v!=2: old
+            # token-count-dedup algorithm undercounted; must reparse once)
+            if cached and cached.get('v') == 2 and cached.get('size') == size:
                 total_cost += cached['cost']
                 total_ti += cached['ti']
                 total_to += cached['to']
                 total_cr += cached['cr']
             else:
                 c, ti, to, _, cr = parse_transcript_cost(fp_path, fallback_pricing)
-                file_cache[fp_path] = {'size': size, 'cost': c, 'ti': ti, 'to': to, 'cr': cr}
+                file_cache[fp_path] = {'v': 2, 'size': size, 'cost': c, 'ti': ti, 'to': to, 'cr': cr}
                 total_cost += c
                 total_ti += ti
                 total_to += to
