@@ -1,5 +1,6 @@
 import sys, json, re, os, glob, time, subprocess
 import urllib.request
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # Force UTF-8 output on Windows
@@ -159,10 +160,10 @@ _PRICING_DATA = {
     'glm':         {'cache_read': 1.30,  'input': 6.00,  'output': 24.00,
                     'names': ['GLM-5.1', 'glm-5.1', 'GLM-5',
                               'GLM-5.2', 'glm-5.2', 'GLM-5.2[1m]', 'glm-5.2[1m]']},
-    'deepseek-pro': {'cache_read': 0.025, 'input': 3.00,  'output': 6.00,
+    'deepseek-pro': {'cache_read': 0.025, 'input': 3.00,  'output': 6.00, 'peak_mult': 2.0,
                      'names': ['DeepSeek V4 Pro', 'deepseek-v4-pro', 'deepseek-v4-pro[1m]',
                                'DeepSeek-V4-Pro', 'deepseek_v4_pro']},
-    'deepseek-flash': {'cache_read': 0.02, 'input': 1.00,  'output': 2.00,
+    'deepseek-flash': {'cache_read': 0.02, 'input': 1.00,  'output': 2.00, 'peak_mult': 2.0,
                        'names': ['DeepSeek V4 Flash', 'deepseek-v4-flash', 'deepseek-v4-flash[1m]',
                                  'DeepSeek-V4-Flash', 'deepseek_v4_flash']},
     'kimi':        {'cache_read': 1.10,  'input': 6.50,  'output': 27.00,
@@ -189,6 +190,26 @@ def get_pricing(model_name):
         if key.lower() in low:
             return pricing
     return None
+
+
+def is_peak_beijing(ts_str):
+    """True if ISO8601 UTC timestamp falls in Beijing peak hours (9-12, 14-18).
+
+    DeepSeek 峰谷定价: 北京时间 9:00~12:00 与 14:00~18:00 价格为平时 2 倍。
+    Missing/unparseable timestamps → off-peak (conservative).
+    """
+    if not ts_str:
+        return False
+    try:
+        s = ts_str.strip()
+        if s.endswith('Z'):
+            s = s[:-1] + '+00:00'
+        dt = datetime.fromisoformat(s)
+        bj = dt.astimezone(timezone(timedelta(hours=8)))
+        h = bj.hour
+        return (9 <= h < 12) or (14 <= h < 18)
+    except Exception:
+        return False
 
 
 # State file
@@ -301,7 +322,10 @@ def parse_transcript_cost(filepath, fallback_pricing):
                 ci = fp[0] + fp[1]
                 cr = fp[2]
                 co = fp[3]
-                cost += (ci * pricing['input'] + cr * pricing['cache_read'] + co * pricing['output']) / 1_000_000
+                mult = pricing.get('peak_mult', 1.0)
+                if mult != 1.0 and not is_peak_beijing(rec.get('timestamp', '')):
+                    mult = 1.0  # 峰谷模型: 非高峰按平时价
+                cost += (ci * pricing['input'] + cr * pricing['cache_read'] + co * pricing['output']) / 1_000_000 * mult
                 ti += ci + cr
                 to += co
                 cr_total += cr
@@ -365,18 +389,63 @@ def compute_session_cost(transcript_path, session_id, fallback_pricing, state):
 
 
 # ========== Parse input ==========
-try:
-    raw = sys.stdin.read()
-    d = json.loads(fix_json(raw))
-except Exception as e:
+# NOTE: background refresh modes defined later in the file call functions
+# defined above; they must NOT reach this stdin-parse block. Guard it.
+if '--refresh-all-sessions' not in sys.argv:
     try:
-        with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log', 'a', encoding='utf-8') as dbg:
-            dbg.write(f'--- {__import__("datetime").datetime.now()} ---\n')
-            dbg.write(f'Error: {e}\n')
-            dbg.write(f'Raw stdin: {repr(raw)}\n\n')
+        raw = sys.stdin.read()
+        d = json.loads(fix_json(raw))
+    except Exception as e:
+        try:
+            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log', 'a', encoding='utf-8') as dbg:
+                dbg.write(f'--- {__import__("datetime").datetime.now()} ---\n')
+                dbg.write(f'Error: {e}\n')
+                dbg.write(f'Raw stdin: {repr(raw)}\n\n')
+        except Exception:
+            pass
+        print('parse error')
+        sys.exit(0)
+
+# ========== All-sessions total cost background refresh mode ==========
+# `python statusline.py --refresh-all-sessions` walks every transcript under
+# ~/.claude/projects/ (main + subagents), parses costs with per-file size
+# caching, and writes the grand total. Runs detached so the statusline never
+# blocks (first full parse ~7000 files ≈ tens of seconds, once; afterwards
+# only changed files re-parse).
+if '--refresh-all-sessions' in sys.argv:
+    try:
+        home = os.path.expanduser('~')
+        cache_path = os.path.join(home, '.claude', 'all_sessions_cache.json')
+        cache = {}
+        try:
+            with open(cache_path, encoding='utf-8') as f:
+                cache = json.load(f)
+        except Exception:
+            cache = {}
+        per_file = cache.get('per_file', {})
+        proj_root = os.path.join(home, '.claude', 'projects')
+        all_files = glob.glob(os.path.join(proj_root, '**', '*.jsonl'), recursive=True)
+        total = 0.0
+        for fp in all_files:
+            try:
+                size = os.path.getsize(fp)
+            except Exception:
+                continue
+            c = per_file.get(fp)
+            if c and c.get('v') == 2 and c.get('size') == size:
+                total += c['cost']
+            else:
+                cost, _, _, _, _ = parse_transcript_cost(fp, None)
+                per_file[fp] = {'v': 2, 'size': size, 'cost': cost}
+                total += cost
+        # Prune entries for deleted files
+        cur = set(all_files)
+        per_file = {k: v for k, v in per_file.items() if k in cur}
+        out = {'total_cost': round(total, 4), 'per_file': per_file, 'computed_at': time.time()}
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(out, f)
     except Exception:
         pass
-    print('parse error')
     sys.exit(0)
 
 line1 = []  # 实时状态: 模型 / 上下文 / 当前token / 难度
@@ -583,11 +652,51 @@ ds_str = get_ds_balance_display(model)
 if ds_str:
     line2.append(ds_str)
 
+# 6d. All-sessions grand total cost (cached; background-refreshed when stale)
+def get_all_sessions_total():
+    """Sum of every session's cost across ~/.claude/projects/ (main + agents).
+    Read cache (instant); if stale (>5min) or absent, fire-and-forget a
+    background full scan and return the cached total (or None)."""
+    cache_path = os.path.join(os.path.expanduser('~'), '.claude', 'all_sessions_cache.json')
+    cache = {}
+    try:
+        with open(cache_path, encoding='utf-8') as f:
+            cache = json.load(f)
+    except Exception:
+        cache = {}
+    now = time.time()
+    if now - cache.get('computed_at', 0) > 300:
+        if now - cache.get('refreshing_at', 0) > 60:
+            cache['refreshing_at'] = now
+            try:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(cache, f)
+            except Exception:
+                pass
+            try:
+                flags = 0x00000008 | 0x08000000  # DETACHED_PROCESS | CREATE_NO_WINDOW
+                subprocess.Popen([sys.executable, os.path.abspath(__file__), '--refresh-all-sessions'],
+                                 creationflags=flags,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 close_fds=True)
+            except Exception:
+                pass
+    total = cache.get('total_cost')
+    if total is None:
+        return None
+    return total
+
+all_total = get_all_sessions_total()
+if all_total is not None:
+    line3 = [f'全部session累计: {clr(fmt_rmb(all_total), "34")}']
+else:
+    line3 = []
+
 # 7. Effort level
 eff = d.get('effort', {}).get('level', '')
 if eff:
     line1.append(f'⚡{eff}')
 
-# Two-line output: line1 = live state, line2 = session totals
-out_lines = [' | '.join(p) for p in (line1, line2) if p]
+# Three-line output: line1 = live state, line2 = session totals, line3 = all sessions
+out_lines = [' | '.join(p) for p in (line1, line2, line3) if p]
 print('\n'.join(out_lines) if out_lines else '')
