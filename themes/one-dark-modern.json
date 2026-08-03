@@ -1,0 +1,18 @@
+{
+  "_comment": "Claude Code 自定义主题 — 复制到 ~/.claude/themes/one-dark-modern.json，再在 settings.json 设 \"theme\": \"custom:one-dark-modern\"。base 继承内置 dark，overrides 只覆盖想改的 token。statusline.py 的 _OD_* 色板与此文件一致。",
+  "name": "One Dark Modern",
+  "base": "dark",
+  "overrides": {
+    "claude": "#61afef",
+    "claudeShimmer": "#56b6c2",
+    "success": "#98c379",
+    "warning": "#e5c07b",
+    "error": "#e06c75",
+    "foreground": "#abb2bf",
+    "muted": "#5c6370",
+    "inactive": "#5c6370",
+    "promptBorder": "#61afef",
+    "permission": "#c678dd",
+    "fastMode": "#e5c07b"
+  }
+}

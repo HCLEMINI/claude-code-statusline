@@ -1,22 +1,18 @@
 {
-  "_comment": "示例配置 — 把 statusLine + hooks 接入 ~/.claude/settings.json（或项目级 .claude/settings.json）。webhook 走环境变量，绝不要硬编码。",
+  "_comment": "示例配置 — 把 statusLine + theme + hooks 接入 ~/.claude/settings.json（或项目级 .claude/settings.json）。路径 C:/Users/YOU 替换成你自己的安装位置。webhook 走 env 或 ~/.claude/.feishu_webhook 文件，绝不要硬编码进脚本。",
   "statusLine": {
     "type": "command",
     "command": "python \"C:/Users/YOU/.claude/statusline.py\"",
     "refreshInterval": 5
   },
+  "theme": "custom:one-dark-modern",
+
   "hooks": {
     "PermissionRequest": [
       {
         "matcher": "*",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/YOU/.claude/hooks/feishu_notify.py\"",
-            "shell": "bash",
-            "async": true,
-            "timeout": 10
-          }
+          { "type": "command", "command": "python \"C:/Users/YOU/.claude/hooks/notify.py\"", "shell": "bash", "async": true, "timeout": 10 }
         ]
       }
     ],
@@ -24,32 +20,31 @@
       {
         "matcher": "AskUserQuestion|ExitPlanMode",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/YOU/.claude/hooks/feishu_notify.py\"",
-            "shell": "bash",
-            "async": true,
-            "timeout": 10
-          }
+          { "type": "command", "command": "python \"C:/Users/YOU/.claude/hooks/notify.py\"", "shell": "bash", "async": true, "timeout": 10 }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/YOU/.claude/hooks/done_notify.py\"",
-            "shell": "bash",
-            "async": true,
-            "timeout": 10
-          }
+          { "type": "command", "command": "python \"C:/Users/YOU/.claude/hooks/notify.py\"", "shell": "bash", "async": true, "timeout": 10 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "python \"C:/Users/YOU/.claude/hooks/theme_guard.py\"", "shell": "bash", "timeout": 5 }
         ]
       }
     ]
   },
+
   "env": {
-    "_comment_env": "飞书 webhook 放这里（Claude Code 的 env 会注入到 hook 子进程）。path 替换成你自己的安装位置。",
-    "FEISHU_WEBHOOK_URL": "https://open.feishu.cn/open-apis/bot/v2/hook/你的webhook-id"
+    "_comment_env": "飞书 webhook 二选一: (A) 放这里的 env, Claude Code 会注入到 hook 子进程; (B) 放进 ~/.claude/.feishu_webhook 单行文件。notify.py 优先读 env, 回退读该文件。token 同理按 provider 各自配。",
+    "FEISHU_WEBHOOK_URL": "https://open.feishu.cn/open-apis/bot/v2/hook/你的webhook-id",
+    "ANTHROPIC_AUTH_TOKEN": "你的token",
+    "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic"
   }
 }
