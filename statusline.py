@@ -243,24 +243,34 @@ def fmt_rmb(yuan):
 # Set STATUSLINE_NOCOLOR=1 to disable (e.g. when piping output).
 _NO_COLOR = bool(os.environ.get('STATUSLINE_NOCOLOR'))
 
+# One Dark Modern truecolor palette — mirrors ~/.claude/themes/one-dark-modern.json
+# so the status line reads as part of the same theme as the Claude Code UI.
+# Values are SGR sequences (fg = "38;2;R;G;B"); clr() renders them verbatim,
+# so 24-bit-supporting terminals (Windows Terminal) show exact One Dark hues.
+_OD_BLUE = '38;2;97;175;239'       # claude   #61afef
+_OD_BLUE_BOLD = '1;38;2;97;175;239'
+_OD_CYAN = '38;2;86;182;194'       # shimmer  #56b6c2
+_OD_GREEN = '38;2;152;195;121'     # success  #98c379
+_OD_YELLOW = '38;2;229;192;123'    # warning  #e5c07b
+_OD_RED = '1;38;2;224;108;117'     # error    #e06c75 (bold so danger stays loud)
+
 
 def clr(s, code):
-    """Wrap s in ANSI color; code is the numeric SGR (e.g. '32', '1;36')."""
+    """Wrap s in ANSI color; code is an SGR sequence (e.g. '32' or '38;2;97;175;239')."""
     if _NO_COLOR:
         return s
     return f'\033[{code}m{s}\033[0m'
 
 
 def ctx_color(pct):
-    """Green<50% / Yellow 50-80% / Bright-red>=80% — context fill warning.
-    Uses bright red (91) so the danger level stays visible on dark themes."""
+    """Green<50% / Yellow 50-80% / Red>=80% — context fill warning, in One Dark tones."""
     if pct is None:
-        return '36'
+        return _OD_CYAN
     if pct >= 80:
-        return '91'  # bright red (visible on dark)
+        return _OD_RED
     if pct >= 50:
-        return '33'  # yellow
-    return '32'  # green
+        return _OD_YELLOW
+    return _OD_GREEN
 
 
 def load_state():
@@ -429,7 +439,7 @@ if '--refresh-all-sessions' not in sys.argv:
         d = json.loads(fix_json(raw))
     except Exception as e:
         try:
-            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log', 'a', encoding='utf-8') as dbg:
+            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log'), 'a', encoding='utf-8') as dbg:
                 dbg.write(f'--- {__import__("datetime").datetime.now()} ---\n')
                 dbg.write(f'Error: {e}\n')
                 dbg.write(f'Raw stdin: {repr(raw)}\n\n')
@@ -483,7 +493,7 @@ line2 = []  # 会话累计: 花费 / 缓存命中
 model_id = d.get('model', {}).get('id', '')
 model = d.get('model', {}).get('display_name', '')
 if model:
-    line1.append(clr(model, '1;36'))
+    line1.append(clr(model, _OD_BLUE_BOLD))
 
 # 2. Context window usage + remaining (with sticky cache to avoid streaming flicker)
 cw = d.get('context_window', {})
@@ -533,11 +543,11 @@ main_cost, agent_cost, mti, mto, ati, ato, total_cr = compute_session_cost(
 save_state(state)
 
 if agent_cost > 0:
-    line2.append(f'花费{clr(f"{fmt_rmb(main_cost + agent_cost)}(含agent{fmt_rmb(agent_cost)})", "33")}')
+    line2.append(f'花费{clr(f"{fmt_rmb(main_cost + agent_cost)}(含agent{fmt_rmb(agent_cost)})", _OD_YELLOW)}')
 elif main_cost > 0:
-    line2.append(f'花费{clr(fmt_rmb(main_cost), "33")}')
+    line2.append(f'花费{clr(fmt_rmb(main_cost), _OD_YELLOW)}')
 elif fallback:
-    line2.append(f'花费{clr("¥0", "33")}')
+    line2.append(f'花费{clr("¥0", _OD_YELLOW)}')
 
 # 4b. Cumulative token consumption split into input / output (main + agent)
 in_tok = mti + ati
@@ -595,7 +605,7 @@ def get_5h_quota_display(model_name):
         delta_h = (reset_ms - now * 1000) / 3_600_000.0
         if delta_h > 0:
             suffix = f'({delta_h * 60:.0f}min)' if delta_h < 1 else f'({delta_h:.1f}h)'
-    return f'5h已用{clr(f"{used:.0f}%{suffix}", "34")}'
+    return f'5h已用{clr(f"{used:.0f}%{suffix}", _OD_CYAN)}'
 
 quota_str = get_5h_quota_display(model)
 if quota_str:
@@ -635,7 +645,7 @@ def get_kimi_balance_display(model_name):
     balance = cache.get('balance')
     if balance is None:
         return None
-    return f'余额{clr(f"¥{balance:.2f}", "34")}'
+    return f'余额{clr(f"¥{balance:.2f}", _OD_CYAN)}'
 
 kimi_str = get_kimi_balance_display(model)
 if kimi_str:
@@ -675,7 +685,7 @@ def get_ds_balance_display(model_name):
     balance = cache.get('balance')
     if balance is None:
         return None
-    return f'余额{clr(f"¥{balance:.2f}", "34")}'
+    return f'余额{clr(f"¥{balance:.2f}", _OD_CYAN)}'
 
 ds_str = get_ds_balance_display(model)
 if ds_str:
@@ -717,7 +727,7 @@ def get_all_sessions_total():
 
 all_total = get_all_sessions_total()
 if all_total is not None:
-    line3 = [f'全部session累计: {clr(fmt_rmb(all_total), "34")}']
+    line3 = [f'全部session累计: {clr(fmt_rmb(all_total), _OD_CYAN)}']
 else:
     line3 = []
 
