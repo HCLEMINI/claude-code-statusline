@@ -47,13 +47,23 @@ def get_session_name(session_id):
 def last_conversational_type(transcript_path):
     """Return 'user'/'assistant' for the last conversational entry in the
     transcript, scanning backward past interleaved metadata (ai-title, mode,
-    permission-mode, ...). None if unreadable / no conv entry."""
+    permission-mode, ...). None if unreadable / no conv entry.
+
+    Only the tail (last 256KB) is read — transcripts grow without bound and
+    the answer always sits at the end; avoids O(file-size) reads per Stop.
+    """
     try:
-        with open(transcript_path, encoding="utf-8") as f:
-            lines = f.readlines()
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            if size > 262144:
+                f.seek(size - 262144)
+                f.readline()  # drop a partial first line
+                data = f.read().decode("utf-8", errors="replace")
+            else:
+                data = f.read().decode("utf-8", errors="replace")
     except Exception:
         return None
-    for ln in reversed(lines):
+    for ln in reversed(data.splitlines()):
         ln = ln.strip()
         if not ln:
             continue
@@ -128,10 +138,21 @@ def detect_phase(data):
 
 def find_pending_tool(transcript_path):
     """Scan transcript tail for an Agent/Task/Workflow tool_use whose
-    tool_result hasn't landed yet. Returns a detail string or None."""
+    tool_result hasn't landed yet. Returns a detail string or None.
+
+    Reads only the tail (last 256KB) — a turn's worth of entries always
+    fits there; avoids O(file-size) reads per Stop.
+    """
     try:
-        with open(transcript_path, encoding="utf-8") as f:
-            lines = f.readlines()
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            if size > 262144:
+                f.seek(size - 262144)
+                f.readline()
+                data = f.read().decode("utf-8", errors="replace")
+            else:
+                data = f.read().decode("utf-8", errors="replace")
+        lines = data.splitlines()
     except Exception:
         return None
     # Walk from the end: collect the last assistant tool_use ids of interest
@@ -190,26 +211,15 @@ def main():
     except Exception:
         data = {}
 
-    # Debug-log the full Stop input (cheap, helps verify field structure /
-    # diagnose mis-classification). Rotate-safe: append only.
-    try:
-        dbg = os.path.join(os.path.expanduser("~"), ".claude", "hooks", "stop_input_debug.log")
-        with open(dbg, "a", encoding="utf-8") as f:
-            f.write(json.dumps(data, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-    if not URL:
-        return  # webhook未配置,静默跳过
     if not should_notify(data):
         return
 
+    # 阶段性停止（后台任务/定时任务/未返回的agent等仍在跑）：不通知
+    if detect_phase(data)[0]:
+        return
+
     name = get_session_name(data.get("session_id", ""))
-    is_phase, detail = detect_phase(data)
-    if is_phase:
-        body = f"⏳ 阶段性停止（{detail}，对话未结束）"
-    else:
-        body = "✅ 回答完成，等待你的下一个问题"
+    body = "✅ 回答完成，等待你的下一个问题"
     text = ("【" + name + "】" + body) if name else body
 
     payload = json.dumps(

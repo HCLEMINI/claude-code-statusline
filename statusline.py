@@ -279,24 +279,30 @@ def save_state(state):
         pass
 
 
-def parse_transcript_cost(filepath, fallback_pricing):
+def parse_transcript_cost(filepath, fallback_pricing, offset=0):
     """Parse one transcript JSONL.
 
-    Returns (cost, total_input, total_output, call_count, cache_read_total).
+    Returns (cost, total_input, total_output, cache_read_total, new_offset).
       - total_input = input_tokens + cache_creation + cache_read (all input)
       - cache_read_total = sum of cache_read_input_tokens (served from cache)
+      - new_offset = bytes consumed (file size after the read)
     Dedup is keyed by the record's `uuid` — the only reliable "same API
     response" identifier. Token-count dedup is WRONG: distinct calls routinely
     share identical token counts (measured: 149 merged groups, 52% cost
     undercount). Records without a uuid are always counted.
+    offset>0 = incremental parse of newly appended lines only (append-only
+    transcripts; new lines are never duplicates, so no dedup needed there).
     Looks up pricing per-entry via the message.model field, falling back to
     the session's model pricing (handles mid-session model switches).
     """
-    seen = set()
+    seen = set() if offset == 0 else None
     cost = 0.0
     ti = to = cr_total = 0
+    new_offset = offset
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
+            if offset:
+                f.seek(offset)
             for line in f:
                 try:
                     rec = json.loads(line)
@@ -309,13 +315,14 @@ def parse_transcript_cost(filepath, fallback_pricing):
                       usage.get('cache_creation_input_tokens', 0),
                       usage.get('cache_read_input_tokens', 0),
                       usage.get('output_tokens', 0))
-                # Dedup by uuid only (same response logged >1x); never by
-                # token counts, which collide across distinct calls.
-                uid = rec.get('uuid', '')
-                if uid:
-                    if uid in seen:
-                        continue
-                    seen.add(uid)
+                if seen is not None:
+                    # Dedup by uuid only (same response logged >1x); never by
+                    # token counts, which collide across distinct calls.
+                    uid = rec.get('uuid', '')
+                    if uid:
+                        if uid in seen:
+                            continue
+                        seen.add(uid)
                 pricing = get_pricing(rec.get('message', {}).get('model', '')) or fallback_pricing
                 if not pricing:
                     continue
@@ -329,9 +336,37 @@ def parse_transcript_cost(filepath, fallback_pricing):
                 ti += ci + cr
                 to += co
                 cr_total += cr
+            new_offset = f.tell()
     except Exception:
-        pass
-    return cost, ti, to, len(seen), cr_total
+        pass  # on error, keep previous offset (safe: no double count)
+    return cost, ti, to, cr_total, new_offset
+
+
+def parse_or_reuse(fp_path, size, cached, fallback_pricing):
+    """Return a fresh cache entry for fp_path given its current size.
+
+    Three paths:
+      1. Unchanged size + valid cache (v=3) → reuse as-is (O(1), no I/O).
+      2. File grew + valid cache → incremental parse of new bytes only
+         (O(new data)); force a full re-parse every `incs>=40` passes as
+         insurance against in-place rewrites (e.g. compaction).
+      3. New file / invalid cache / truncated → full parse with uuid dedup.
+    """
+    if cached and cached.get('v') == 3 and cached.get('size') == size:
+        return cached
+    if cached and cached.get('v') == 3 and size >= cached.get('offset', 0) \
+            and cached.get('incs', 0) < 40:
+        c, ti, to, cr, new_off = parse_transcript_cost(fp_path, fallback_pricing,
+                                                       cached['offset'])
+        return {'v': 3, 'size': size, 'offset': new_off,
+                'cost': cached['cost'] + c,
+                'ti': cached['ti'] + ti,
+                'to': cached['to'] + to,
+                'cr': cached['cr'] + cr,
+                'incs': cached['incs'] + 1}
+    c, ti, to, cr, new_off = parse_transcript_cost(fp_path, fallback_pricing, 0)
+    return {'v': 3, 'size': size, 'offset': new_off,
+            'cost': c, 'ti': ti, 'to': to, 'cr': cr, 'incs': 0}
 
 
 def compute_session_cost(transcript_path, session_id, fallback_pricing, state):
@@ -362,21 +397,12 @@ def compute_session_cost(transcript_path, session_id, fallback_pricing, state):
                 size = os.path.getsize(fp_path)
             except Exception:
                 continue
-            cached = file_cache.get(fp_path)
-            # Re-parse if size changed OR cache format is stale (v!=2: old
-            # token-count-dedup algorithm undercounted; must reparse once)
-            if cached and cached.get('v') == 2 and cached.get('size') == size:
-                total_cost += cached['cost']
-                total_ti += cached['ti']
-                total_to += cached['to']
-                total_cr += cached['cr']
-            else:
-                c, ti, to, _, cr = parse_transcript_cost(fp_path, fallback_pricing)
-                file_cache[fp_path] = {'v': 2, 'size': size, 'cost': c, 'ti': ti, 'to': to, 'cr': cr}
-                total_cost += c
-                total_ti += ti
-                total_to += to
-                total_cr += cr
+            nxt = parse_or_reuse(fp_path, size, file_cache.get(fp_path), fallback_pricing)
+            file_cache[fp_path] = nxt
+            total_cost += nxt['cost']
+            total_ti += nxt['ti']
+            total_to += nxt['to']
+            total_cr += nxt['cr']
         return total_cost, total_ti, total_to, total_cr
 
     mc, mti, mto, mcr = tally(files['main'])
@@ -397,7 +423,7 @@ if '--refresh-all-sessions' not in sys.argv:
         d = json.loads(fix_json(raw))
     except Exception as e:
         try:
-            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log', 'a', encoding='utf-8') as dbg:
+            with open(os.path.join(os.path.expanduser('~'), '.claude', 'statusline_debug.log'), 'a', encoding='utf-8') as dbg:
                 dbg.write(f'--- {__import__("datetime").datetime.now()} ---\n')
                 dbg.write(f'Error: {e}\n')
                 dbg.write(f'Raw stdin: {repr(raw)}\n\n')
@@ -431,13 +457,9 @@ if '--refresh-all-sessions' in sys.argv:
                 size = os.path.getsize(fp)
             except Exception:
                 continue
-            c = per_file.get(fp)
-            if c and c.get('v') == 2 and c.get('size') == size:
-                total += c['cost']
-            else:
-                cost, _, _, _, _ = parse_transcript_cost(fp, None)
-                per_file[fp] = {'v': 2, 'size': size, 'cost': cost}
-                total += cost
+            nxt = parse_or_reuse(fp, size, per_file.get(fp), None)
+            per_file[fp] = nxt
+            total += nxt['cost']
         # Prune entries for deleted files
         cur = set(all_files)
         per_file = {k: v for k, v in per_file.items() if k in cur}
