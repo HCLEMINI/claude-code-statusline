@@ -291,6 +291,19 @@ def build_decision_body(data):
 
 
 # ---------------- dispatch ----------------
+def _log_call(event, result):
+    """Append one line per invocation to ~/.claude/notify_call.log so we can
+    confirm the hook is actually fired by Claude Code (vs a stale session
+    config pointing at a deleted script). Best-effort, never raises."""
+    try:
+        import datetime
+        with open(os.path.join(os.path.expanduser('~'), '.claude', 'notify_call.log'),
+                  'a', encoding='utf-8') as f:
+            f.write(f'{datetime.datetime.now():%m-%d %H:%M:%S} event={event!r} {result}\n')
+    except Exception:
+        pass
+
+
 def main():
     try:
         raw = sys.stdin.buffer.read()
@@ -302,8 +315,10 @@ def main():
 
     if event == "Stop":
         if not should_notify(data):
+            _log_call(event, 'skip(not-genuine-stop)')
             return
         if detect_phase(data)[0]:
+            _log_call(event, 'skip(phase-stop)')
             return  # phase stop (background/pending work) — don't notify
         body = "✅ 回答完成，等待你的下一个问题"
     else:
@@ -314,6 +329,7 @@ def main():
     feishu_send(("【" + name + "】" + body) if name else body)
     toast_title = ("Claude Code · " + name) if name else "Claude Code"
     toast_send(toast_title, body)
+    _log_call(event, f'sent | url={bool(FEISHU_URL)} | {body[:30]!r}')
 
 
 if __name__ == "__main__":
